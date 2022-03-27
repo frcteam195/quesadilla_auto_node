@@ -5,26 +5,30 @@
 #include <string>
 #include <mutex>
 
+#include "PlannerInput.pb.h"
+#include "PlannerOutput.pb.h"
+
+#include <quesadilla_auto_node/Planner_Input.h>
+#include <quesadilla_auto_node/Planner_Output.h>
+
 ros::NodeHandle* node;
+
+quesadilla_auto_node::Planner_Input mROSPlannerInput;
+quesadilla_auto_node::Planner_Output mROSPlannerOutput;
 
 int main(int argc, char **argv)
 {
-	/**
-	 * The ros::init() function needs to see argc and argv so that it can perform
-	 * any ROS arguments and name remapping that were provided at the command line.
-	 * For programmatic remappings you can use a different version of init() which takes
-	 * remappings directly, but for most command-line programs, passing argc and argv is
-	 * the easiest way to do it.  The third argument to init() is the name of the node.
-	 *
-	 * You must call one of the versions of ros::init() before using any other
-	 * part of the ROS system.
-	 */
 	ros::init(argc, argv, "quesadilla_auto_node");
 
 	ros::NodeHandle n;
 
 	node = &n;
+	ros::Rate rate(100);
+	while (ros::ok())
+	{
+		ros::spinOnce();
+		rate.sleep();
+	}
 
-	ros::spin();
 	return 0;
 }

@@ -1,0 +1,4 @@
+float64 timestamp
+bool force_stop
+bool begin_trajectory
+int32 trajectory_id
