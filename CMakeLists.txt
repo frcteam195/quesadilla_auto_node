@@ -119,6 +119,7 @@ include_directories(
 # include
  ${catkin_INCLUDE_DIRS}
  ${CMAKE_SOURCE_DIR}/../../../third_party_libs/ROSProtoDef2022/out
+ ${CMAKE_SOURCE_DIR}/../../../third_party_libs/quesadilla_ros_proto/out
 )
 
 message("CATKIN INCLUDES:${catkin_INCLUDE_DIRS}")
@@ -213,6 +214,14 @@ target_include_directories(${PROJECT_NAME} PUBLIC "include")
 target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES} Threads::Threads)
 add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
+if(ROBOT_ARCHITECTURE_X86_64)
+  target_link_libraries(${PROJECT_NAME} ${CMAKE_SOURCE_DIR}/../../../third_party_libs/quesadilla_ros_proto/out/x86_64/quesadilla_ros_proto.a)
+endif(ROBOT_ARCHITECTURE_X86_64)
+
+if(ROBOT_ARCHITECTURE_AARCH64)
+  target_link_libraries(${PROJECT_NAME} ${CMAKE_SOURCE_DIR}/../../../third_party_libs/quesadilla_ros_proto/out/aarch64/quesadilla_ros_proto.a)
+endif(ROBOT_ARCHITECTURE_AARCH64)
+
 #############
 ## Testing ##
 #############
@@ -222,6 +231,14 @@ if(CATKIN_ENABLE_TESTING)
   target_include_directories(t${PROJECT_NAME} PUBLIC "include")
   target_link_libraries(t${PROJECT_NAME} ${catkin_LIBRARIES} Threads::Threads)
   add_dependencies(t${PROJECT_NAME} ${PROJECT_NAME} ${t${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+  if(ROBOT_ARCHITECTURE_X86_64)
+    target_link_libraries(t${PROJECT_NAME} ${CMAKE_SOURCE_DIR}/../../../third_party_libs/quesadilla_ros_proto/out/x86_64/quesadilla_ros_proto.a)
+  endif(ROBOT_ARCHITECTURE_X86_64)
+  
+  if(ROBOT_ARCHITECTURE_AARCH64)
+    target_link_libraries(t${PROJECT_NAME} ${CMAKE_SOURCE_DIR}/../../../third_party_libs/quesadilla_ros_proto/out/aarch64/quesadilla_ros_proto.a)
+  endif(ROBOT_ARCHITECTURE_AARCH64)
 
   catkin_add_gtest(${PROJECT_NAME}-test ${test_sources})
   if(TARGET ${PROJECT_NAME}-test)
