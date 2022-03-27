@@ -1,8 +1,8 @@
-  float64 leftMotorOutputRadPerSec
-  float64 leftMotorFeedForwardVoltage
-  float64 leftMotorAccelRadPerSec2
-  float64 rightMotorOutputRadPerSec
-  float64 rightMotorFeedForwardVoltage
-  float64 rightMotorAccelRadPerSec2
-  bool trajectoryActive
-  bool trajectoryCompleted
+  float64 left_motor_output_rad_per_sec
+  float64 left_motor_feedforward_voltage
+  float64 left_motor_accel_rad_per_sec2
+  float64 right_motor_output_rad_per_sec
+  float64 right_motor_feedforward_voltage
+  float64 right_motor_accel_rad_per_sec2
+  bool trajectory_active
+  bool trajectory_completed

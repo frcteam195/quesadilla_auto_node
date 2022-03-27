@@ -16,6 +16,10 @@
 
 #include <quesadilla_auto_node/Planner_Input.h>
 #include <quesadilla_auto_node/Planner_Output.h>
+#include <nav_msgs/Odometry.h>
+#include <ck_utilities/CKMath.hpp>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Matrix3x3.h>
 
 #define PORT     5803
 #define BUFSIZE 1500
@@ -26,19 +30,26 @@ quesadilla_auto_node::Planner_Input mROSPlannerInput;
 quesadilla_auto_node::Planner_Output mROSPlannerOutput;
 ros::Publisher mROSPlannerOutputPub;
 
-ck::PlannerInput mProtoPlannerInput;
-ck::PlannerOutput mProtoPlannerOutput;
-
 std::recursive_mutex mThreadLock;
+
+sockaddr_in mSIPAddr;
 
 int fd;
 bool socketInitSuccess;
+char outputBuffer[BUFSIZE];
 
 bool socket_init()
 {
 	std::lock_guard<std::recursive_mutex> lock(mThreadLock);
     if (!socketInitSuccess)
     {
+		memset(outputBuffer, 0, BUFSIZE);
+
+		memset(&mSIPAddr, 0, sizeof(mSIPAddr));
+		mSIPAddr.sin_family = AF_INET;
+		mSIPAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+		mSIPAddr.sin_port = htons(PORT);
+
         fd = socket(AF_INET,SOCK_DGRAM,0);
         if(fd<0){
             ROS_ERROR("cannot open socket");
@@ -57,37 +68,79 @@ void ros_planner_input_callback(const quesadilla_auto_node::Planner_Input &msg)
 
 void setROSOutputZeros()
 {
-	mROSPlannerOutput.leftMotorOutputRadPerSec = 0;
-	mROSPlannerOutput.leftMotorFeedForwardVoltage = 0;
-	mROSPlannerOutput.leftMotorAccelRadPerSec2 = 0;
-	mROSPlannerOutput.rightMotorOutputRadPerSec = 0;
-	mROSPlannerOutput.rightMotorFeedForwardVoltage = 0;
-	mROSPlannerOutput.rightMotorAccelRadPerSec2 = 0;
-	mROSPlannerOutput.trajectoryActive = false;
-	mROSPlannerOutput.trajectoryCompleted = false;
+	mROSPlannerOutput.left_motor_output_rad_per_sec = 0;
+	mROSPlannerOutput.left_motor_feedforward_voltage = 0;
+	mROSPlannerOutput.left_motor_accel_rad_per_sec2 = 0;
+	mROSPlannerOutput.right_motor_output_rad_per_sec = 0;
+	mROSPlannerOutput.right_motor_feedforward_voltage = 0;
+	mROSPlannerOutput.right_motor_accel_rad_per_sec2 = 0;
+	mROSPlannerOutput.trajectory_active = false;
+	mROSPlannerOutput.trajectory_completed = false;
 }
 
-void send_planner_input()
+void ros_odom_callback(const nav_msgs::Odometry &msg)
+{
+	ck::PlannerInput protoPlannerInput;
+	protoPlannerInput.Clear();
+	protoPlannerInput.set_timestamp(ros::Time::now().toSec());
+	ck::PlannerInput::Pose2d* pose2d = new ck::PlannerInput::Pose2d();
+	pose2d->set_x(ck::math::meters_to_inches(msg.pose.pose.position.x));
+	pose2d->set_y(ck::math::meters_to_inches(msg.pose.pose.position.y));
+	tf2::Quaternion rotation(msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w);
+	tf2::Matrix3x3 q(rotation);
+	double r, p, y;
+	q.getRPY(r, p, y);
+	pose2d->set_yaw(y);
+	protoPlannerInput.set_allocated_pose(pose2d);
+	{
+		std::lock_guard<std::recursive_mutex> lock(mThreadLock);
+		protoPlannerInput.set_begin_trajectory(mROSPlannerInput.begin_trajectory);
+		protoPlannerInput.set_force_stop(mROSPlannerInput.force_stop);
+		protoPlannerInput.set_trajectory_id(mROSPlannerInput.trajectory_id);
+	}
+
+	if (protoPlannerInput.SerializeToArray(outputBuffer, BUFSIZE))
+	{
+		ssize_t bSent = sendto(fd, outputBuffer, protoPlannerInput.ByteSizeLong(), 0, (struct sockaddr*)&mSIPAddr, sizeof(mSIPAddr));
+		if (bSent < 0)
+		{
+			ROS_ERROR("Failed to send quesadilla proto planner input");
+		}
+	}
+}
+
+void receive_data_thread()
 {
 	char buffer[BUFSIZE];
 	memset(buffer, 0, BUFSIZE);
-	{
-		std::lock_guard<std::recursive_mutex> lock(mThreadLock);
-		while (!socket_init()){}
-	}
 
-	ros::Rate rate(100);
 	while (ros::ok())
 	{
 		{
-			std::lock_guard<std::recursive_mutex> lock(mThreadLock);
-			if (!socketInitSuccess)
+			sockaddr recvFromAddr;
+			socklen_t recvFromAddrSize;
+			int numBytes = recvfrom(fd, &buffer, sizeof(buffer), MSG_WAITALL, &recvFromAddr, &recvFromAddrSize);
+			if (numBytes > 0)
 			{
-				socket_init();
+				ck::PlannerOutput protoPlannerOutput;
+				if(protoPlannerOutput.ParseFromArray(buffer, numBytes))
+				{
+					mROSPlannerOutput.left_motor_output_rad_per_sec = protoPlannerOutput.left_motor_output_rad_per_sec();
+					mROSPlannerOutput.left_motor_feedforward_voltage = protoPlannerOutput.left_motor_feedforward_voltage();
+					mROSPlannerOutput.left_motor_accel_rad_per_sec2 = protoPlannerOutput.left_motor_accel_rad_per_sec2();
+					mROSPlannerOutput.right_motor_output_rad_per_sec = protoPlannerOutput.right_motor_output_rad_per_sec();
+					mROSPlannerOutput.right_motor_feedforward_voltage = protoPlannerOutput.right_motor_feedforward_voltage();
+					mROSPlannerOutput.right_motor_accel_rad_per_sec2 = protoPlannerOutput.right_motor_accel_rad_per_sec2();
+					mROSPlannerOutput.trajectory_active = protoPlannerOutput.trajectory_active();
+					mROSPlannerOutput.trajectory_completed = protoPlannerOutput.trajectory_completed();
+				}
+				else
+				{
+					setROSOutputZeros();
+				}
 			}
-			
 		}
-		rate.sleep();
+		mROSPlannerOutputPub.publish(mROSPlannerOutput);
 	}
 }
 
@@ -98,43 +151,21 @@ int main(int argc, char **argv)
 	node = &n;
 
 	ros::Subscriber ros_planner_input_sub = node->subscribe("/QuesadillaPlannerInput", 1, ros_planner_input_callback);
+	ros::Subscriber ros_odom_sub = node->subscribe("/odometry/filtered", 1, ros_odom_callback);
 	mROSPlannerOutputPub = node->advertise<quesadilla_auto_node::Planner_Output>("/QuesadillaPlannerOutput", 1);
-
-	char buffer[BUFSIZE];
-	memset(buffer, 0, BUFSIZE);
 
     while (!socket_init()){}
 
-	sockaddr_in servaddr;
-    memset(&servaddr, 0, sizeof(servaddr));
-    servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = INADDR_ANY;
-    servaddr.sin_port = htons(PORT);
-
 	// Bind the socket with the server address
-    if ( bind(fd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0 )
+    if ( bind(fd, (const struct sockaddr *)&mSIPAddr, sizeof(mSIPAddr)) < 0 )
     {
         ROS_ERROR("bind failed");
 		ros::shutdown();
     }
 
-	std::thread mPlannerInputSendThread(send_planner_input);
+	std::thread recv_thread(receive_data_thread);
 
-	ros::Rate rate(100);
-	while (ros::ok())
-	{
-		ros::spinOnce();
-		{
-			std::lock_guard<std::recursive_mutex> lock(mThreadLock);
-			sockaddr recvFromAddr;
-			socklen_t recvFromAddrSize;
-			int numBytes = recvfrom(fd, &buffer, sizeof(buffer), MSG_WAITALL, &recvFromAddr, &recvFromAddrSize);
-		}
-		mROSPlannerOutputPub.publish(mROSPlannerOutput);
-		rate.sleep();
-	}
-
-	mPlannerInputSendThread.join();
+	ros::spin();
 
 	return 0;
 }
