@@ -201,6 +201,10 @@ message("CATKIN INCLUDES:${catkin_INCLUDE_DIRS}")
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
+include(FindProtobuf)
+find_package(Protobuf 3.18.0.0 EXACT REQUIRED PATHS /usr/local/lib)
+include_directories(${PROTOBUF_INCLUDE_DIR})
+
 file(GLOB_RECURSE executable_sources CONFIGURE_DEPENDS
      "${PROJECT_SOURCE_DIR}/src/*.cpp"
 )
@@ -212,7 +216,6 @@ file(GLOB_RECURSE test_sources CONFIGURE_DEPENDS
 add_executable(${PROJECT_NAME} ${executable_sources})
 target_include_directories(${PROJECT_NAME} PUBLIC "include")
 target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES} Threads::Threads)
-add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 if(ROBOT_ARCHITECTURE_X86_64)
   target_link_libraries(${PROJECT_NAME} ${CMAKE_SOURCE_DIR}/../../../third_party_libs/quesadilla_ros_proto/out/x86_64/quesadilla_ros_proto.a)
@@ -221,6 +224,11 @@ endif(ROBOT_ARCHITECTURE_X86_64)
 if(ROBOT_ARCHITECTURE_AARCH64)
   target_link_libraries(${PROJECT_NAME} ${CMAKE_SOURCE_DIR}/../../../third_party_libs/quesadilla_ros_proto/out/aarch64/quesadilla_ros_proto.a)
 endif(ROBOT_ARCHITECTURE_AARCH64)
+
+target_link_libraries(${PROJECT_NAME} ${PROTOBUF_LIBRARY})
+
+add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
 
 #############
 ## Testing ##
