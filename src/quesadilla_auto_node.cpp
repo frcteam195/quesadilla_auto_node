@@ -108,10 +108,9 @@ void ros_odom_callback(const nav_msgs::Odometry &msg)
 	protoPlannerInput.set_timestamp(ros::Time::now().toSec());
 	
 	tf2::Stamped<tf2::Transform> localSideOdometryConverted;
-	geometry_msgs::PoseStamped bleh;
-	bleh.pose = msg.pose.pose;
-	tfBuffer.transform(bleh, localSideOdometryConverted, is_red_alliance ? "red_link" : "blue_link");
-
+	geometry_msgs::PoseStamped odomToRobot;
+	odomToRobot.pose = msg.pose.pose;
+	tfBuffer.transform(odomToRobot, localSideOdometryConverted, is_red_alliance ? "red_link" : "blue_link");
 	ck::PlannerInput::Pose2d* pose2d = new ck::PlannerInput::Pose2d();
 	pose2d->set_x(ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getX()));
 	pose2d->set_y(ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getY()));
