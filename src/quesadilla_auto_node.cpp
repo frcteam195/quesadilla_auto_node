@@ -14,12 +14,25 @@
 #include "PlannerInput.pb.h"
 #include "PlannerOutput.pb.h"
 
+#include <rio_control_node/Robot_Status.h>
 #include <quesadilla_auto_node/Planner_Input.h>
 #include <quesadilla_auto_node/Planner_Output.h>
-#include <nav_msgs/Odometry.h>
 #include <ck_utilities/CKMath.hpp>
+
+#include <nav_msgs/Odometry.h>
+
+#include <geometry_msgs/PoseWithCovariance.h>
+#include <geometry_msgs/TransformStamped.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
+#include <geometry_msgs/Pose.h>
+#include <geometry_msgs/PoseStamped.h>
+
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/buffer_core.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2/convert.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 #define PORT     5803
 #define BUFSIZE 1500
@@ -30,6 +43,9 @@ quesadilla_auto_node::Planner_Input mROSPlannerInput;
 quesadilla_auto_node::Planner_Output mROSPlannerOutput;
 ros::Publisher mROSPlannerOutputPub;
 
+tf2_ros::Buffer tfBuffer;
+tf2_ros::TransformListener* tfListener;
+
 std::recursive_mutex mThreadLock;
 
 sockaddr_in mSIPAddr;
@@ -37,6 +53,7 @@ sockaddr_in mSIPAddr;
 int fd;
 bool socketInitSuccess;
 char outputBuffer[BUFSIZE];
+static std::atomic_bool is_red_alliance {false};
 
 bool socket_init()
 {
@@ -78,16 +95,27 @@ void setROSOutputZeros()
 	mROSPlannerOutput.trajectory_completed = false;
 }
 
+void robot_status_callback(const rio_control_node::Robot_Status &msg)
+{
+	is_red_alliance = msg.alliance == rio_control_node::Robot_Status::RED;
+}
+
 void ros_odom_callback(const nav_msgs::Odometry &msg)
 {
+	(void)(msg);
 	ck::PlannerInput protoPlannerInput;
 	protoPlannerInput.Clear();
 	protoPlannerInput.set_timestamp(ros::Time::now().toSec());
+	
+	tf2::Stamped<tf2::Transform> localSideOdometryConverted;
+	geometry_msgs::PoseStamped bleh;
+	bleh.pose = msg.pose.pose;
+	tfBuffer.transform(bleh, localSideOdometryConverted, is_red_alliance ? "red_link" : "blue_link");
+
 	ck::PlannerInput::Pose2d* pose2d = new ck::PlannerInput::Pose2d();
-	pose2d->set_x(ck::math::meters_to_inches(msg.pose.pose.position.x));
-	pose2d->set_y(ck::math::meters_to_inches(msg.pose.pose.position.y));
-	tf2::Quaternion rotation(msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w);
-	tf2::Matrix3x3 q(rotation);
+	pose2d->set_x(ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getX()));
+	pose2d->set_y(ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getY()));
+	tf2::Matrix3x3 q(localSideOdometryConverted.getRotation());
 	double r, p, y;
 	q.getRPY(r, p, y);
 	pose2d->set_yaw(y);
@@ -150,8 +178,11 @@ int main(int argc, char **argv)
 	ros::NodeHandle n;
 	node = &n;
 
+	tfListener = new tf2_ros::TransformListener(tfBuffer);
+
 	ros::Subscriber ros_planner_input_sub = node->subscribe("/QuesadillaPlannerInput", 1, ros_planner_input_callback);
 	ros::Subscriber ros_odom_sub = node->subscribe("/odometry/filtered", 1, ros_odom_callback);
+	ros::Subscriber robot_status_sub = node->subscribe("/RobotStatus", 1, robot_status_callback);
 	mROSPlannerOutputPub = node->advertise<quesadilla_auto_node::Planner_Output>("/QuesadillaPlannerOutput", 1);
 
     while (!socket_init()){}
