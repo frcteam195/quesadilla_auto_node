@@ -39,7 +39,7 @@
 
 ros::NodeHandle* node;
 
-quesadilla_auto_node::Planner_Input mROSPlannerInput;
+quesadilla_auto_node::Planner_Input::Request mROSPlannerInput;
 quesadilla_auto_node::Planner_Output mROSPlannerOutput;
 ros::Publisher mROSPlannerOutputPub;
 
@@ -77,10 +77,31 @@ bool socket_init()
     return socketInitSuccess;
 }
 
-void ros_planner_input_callback(const quesadilla_auto_node::Planner_Input &msg)
+bool ros_planner_input_callback(quesadilla_auto_node::Planner_Input::Request &request, quesadilla_auto_node::Planner_Input::Response &response)
 {
 	std::lock_guard<std::recursive_mutex> lock(mThreadLock);
-	mROSPlannerInput = msg;
+	mROSPlannerInput.force_stop = request.force_stop;
+	mROSPlannerInput.trajectory_id = request.trajectory_id;
+
+	if (!mROSPlannerOutput.trajectory_active)
+	{
+		mROSPlannerInput.begin_trajectory = request.begin_trajectory;
+	}
+	else
+	{
+		mROSPlannerInput.begin_trajectory = false;
+	}
+
+	if (mROSPlannerInput.begin_trajectory || request.force_stop)
+	{
+		response.command_accepted = true;
+	}
+	else
+	{
+		response.command_accepted = false;
+	}
+
+	return response.command_accepted;
 }
 
 void setROSOutputZeros()
@@ -114,10 +135,7 @@ void ros_odom_callback(const nav_msgs::Odometry &msg)
 	ck::PlannerInput::Pose2d* pose2d = new ck::PlannerInput::Pose2d();
 	pose2d->set_x(ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getX()));
 	pose2d->set_y(ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getY()));
-	tf2::Matrix3x3 q(localSideOdometryConverted.getRotation());
-	double r, p, y;
-	q.getRPY(r, p, y);
-	pose2d->set_yaw(y);
+	pose2d->set_yaw(ck::math::get_yaw_from_quaternion(localSideOdometryConverted.getRotation()));
 	protoPlannerInput.set_allocated_pose(pose2d);
 	{
 		std::lock_guard<std::recursive_mutex> lock(mThreadLock);
@@ -158,8 +176,16 @@ void receive_data_thread()
 					mROSPlannerOutput.right_motor_output_rad_per_sec = protoPlannerOutput.right_motor_output_rad_per_sec();
 					mROSPlannerOutput.right_motor_feedforward_voltage = protoPlannerOutput.right_motor_feedforward_voltage();
 					mROSPlannerOutput.right_motor_accel_rad_per_sec2 = protoPlannerOutput.right_motor_accel_rad_per_sec2();
-					mROSPlannerOutput.trajectory_active = protoPlannerOutput.trajectory_active();
 					mROSPlannerOutput.trajectory_completed = protoPlannerOutput.trajectory_completed();
+
+					{
+						std::lock_guard<std::recursive_mutex> lock(mThreadLock);
+						mROSPlannerOutput.trajectory_active = protoPlannerOutput.trajectory_active();
+						if (mROSPlannerOutput.trajectory_active)
+						{
+							mROSPlannerInput.begin_trajectory = false;
+						}
+					}
 				}
 				else
 				{
@@ -179,7 +205,7 @@ int main(int argc, char **argv)
 
 	tfListener = new tf2_ros::TransformListener(tfBuffer);
 
-	ros::Subscriber ros_planner_input_sub = node->subscribe("/QuesadillaPlannerInput", 1, ros_planner_input_callback);
+	ros::ServiceServer ros_planner_input_sub = node->advertiseService("quesadilla_planner_input", ros_planner_input_callback);
 	ros::Subscriber ros_odom_sub = node->subscribe("/odometry/filtered", 1, ros_odom_callback);
 	ros::Subscriber robot_status_sub = node->subscribe("/RobotStatus", 1, robot_status_callback);
 	mROSPlannerOutputPub = node->advertise<quesadilla_auto_node::Planner_Output>("/QuesadillaPlannerOutput", 1);
