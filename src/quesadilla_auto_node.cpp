@@ -34,7 +34,8 @@
 #include <tf2/convert.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
-#define PORT     5803
+#define RECV_PORT     5803
+#define SEND_PORT     5804
 #define BUFSIZE 1500
 
 ros::NodeHandle* node;
@@ -64,8 +65,8 @@ bool socket_init()
 
 		memset(&mSIPAddr, 0, sizeof(mSIPAddr));
 		mSIPAddr.sin_family = AF_INET;
-		mSIPAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-		mSIPAddr.sin_port = htons(PORT);
+		mSIPAddr.sin_addr.s_addr = INADDR_ANY;
+		mSIPAddr.sin_port = htons(RECV_PORT);
 
         fd = socket(AF_INET,SOCK_DGRAM,0);
         if(fd<0){
@@ -123,34 +124,40 @@ void robot_status_callback(const rio_control_node::Robot_Status &msg)
 
 void ros_odom_callback(const nav_msgs::Odometry &msg)
 {
-	(void)(msg);
-	ck::PlannerInput protoPlannerInput;
-	protoPlannerInput.Clear();
-	protoPlannerInput.set_timestamp(ros::Time::now().toSec());
-	
-	tf2::Stamped<tf2::Transform> localSideOdometryConverted;
-	geometry_msgs::PoseStamped odomToRobot;
-	odomToRobot.pose = msg.pose.pose;
-	tfBuffer.transform(odomToRobot, localSideOdometryConverted, is_red_alliance ? "red_link" : "blue_link");
-	ck::PlannerInput::Pose2d* pose2d = new ck::PlannerInput::Pose2d();
-	pose2d->set_x(ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getX()));
-	pose2d->set_y(ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getY()));
-	pose2d->set_yaw(ck::math::get_yaw_from_quaternion(localSideOdometryConverted.getRotation()));
-	protoPlannerInput.set_allocated_pose(pose2d);
-	{
-		std::lock_guard<std::recursive_mutex> lock(mThreadLock);
-		protoPlannerInput.set_begin_trajectory(mROSPlannerInput.begin_trajectory);
-		protoPlannerInput.set_force_stop(mROSPlannerInput.force_stop);
-		protoPlannerInput.set_trajectory_id(mROSPlannerInput.trajectory_id);
-	}
-
-	if (protoPlannerInput.SerializeToArray(outputBuffer, BUFSIZE))
-	{
-		ssize_t bSent = sendto(fd, outputBuffer, protoPlannerInput.ByteSizeLong(), 0, (struct sockaddr*)&mSIPAddr, sizeof(mSIPAddr));
-		if (bSent < 0)
+	try {
+		ck::PlannerInput protoPlannerInput;
+		protoPlannerInput.Clear();
+		protoPlannerInput.set_timestamp(ros::Time::now().toSec());
+		
+		tf2::Stamped<tf2::Transform> localSideOdometryConverted;
+		geometry_msgs::PoseStamped odomToRobot;
+		odomToRobot.header.frame_id = "odom";
+		odomToRobot.pose = msg.pose.pose;
+		tfBuffer.transform(odomToRobot, localSideOdometryConverted, is_red_alliance ? "red_link" : "blue_link");
+		ck::PlannerInput::Pose2d* pose2d = new ck::PlannerInput::Pose2d();
+		pose2d->set_x(ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getX()));
+		pose2d->set_y(ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getY()));
+		pose2d->set_yaw(ck::math::get_yaw_from_quaternion(localSideOdometryConverted.getRotation()));
+		protoPlannerInput.set_allocated_pose(pose2d);
 		{
-			ROS_ERROR("Failed to send quesadilla proto planner input");
+			std::lock_guard<std::recursive_mutex> lock(mThreadLock);
+			protoPlannerInput.set_begin_trajectory(mROSPlannerInput.begin_trajectory);
+			protoPlannerInput.set_force_stop(mROSPlannerInput.force_stop);
+			protoPlannerInput.set_trajectory_id(mROSPlannerInput.trajectory_id);
 		}
+
+		if (protoPlannerInput.SerializeToArray(outputBuffer, BUFSIZE))
+		{
+			ssize_t bSent = sendto(fd, outputBuffer, protoPlannerInput.ByteSizeLong(), 0, (struct sockaddr*)&mSIPAddr, sizeof(mSIPAddr));
+			if (bSent < 0)
+			{
+				ROS_ERROR("Failed to send quesadilla proto planner input");
+			}
+		}
+	}
+	catch (...)
+	{
+		
 	}
 }
 
@@ -219,6 +226,9 @@ int main(int argc, char **argv)
 		ros::shutdown();
     }
 
+	//Update address with send port
+	mSIPAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+	mSIPAddr.sin_port = htons(SEND_PORT);
 	std::thread recv_thread(receive_data_thread);
 
 	ros::spin();
