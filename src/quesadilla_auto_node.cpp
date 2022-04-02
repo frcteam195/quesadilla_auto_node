@@ -49,9 +49,11 @@ tf2_ros::TransformListener* tfListener;
 
 std::recursive_mutex mThreadLock;
 
-sockaddr_in mSIPAddr;
+sockaddr_in mSIPAddr_in;
+sockaddr_in mSIPAddr_out;
 
-int fd;
+int fd_in;
+int fd_out;
 bool socketInitSuccess;
 char outputBuffer[BUFSIZE];
 static std::atomic_bool is_red_alliance {false};
@@ -63,16 +65,37 @@ bool socket_init()
     {
 		memset(outputBuffer, 0, BUFSIZE);
 
-		memset(&mSIPAddr, 0, sizeof(mSIPAddr));
-		mSIPAddr.sin_family = AF_INET;
-		mSIPAddr.sin_addr.s_addr = INADDR_ANY;
-		mSIPAddr.sin_port = htons(RECV_PORT);
+		memset(&mSIPAddr_in, 0, sizeof(mSIPAddr_in));
+		mSIPAddr_in.sin_family = AF_INET;
+		mSIPAddr_in.sin_addr.s_addr = INADDR_ANY;
+		mSIPAddr_in.sin_port = htons(RECV_PORT);
 
-        fd = socket(AF_INET,SOCK_DGRAM,0);
-        if(fd<0){
+        fd_in = socket(AF_INET,SOCK_DGRAM,0);
+        if(fd_in<0){
             ROS_ERROR("cannot open socket");
             return false;
         }
+
+
+		// Bind the socket with the server address
+		if ( bind(fd_in, (const struct sockaddr *)&mSIPAddr_in, sizeof(mSIPAddr_in)) < 0 )
+		{
+			ROS_ERROR("bind failed");
+			ros::shutdown();
+		}
+
+
+		memset(&mSIPAddr_out, 0, sizeof(mSIPAddr_out));
+		mSIPAddr_out.sin_family = AF_INET;
+		mSIPAddr_out.sin_addr.s_addr = inet_addr("127.0.0.1");
+		mSIPAddr_out.sin_port = htons(SEND_PORT);
+
+        fd_out = socket(AF_INET,SOCK_DGRAM,0);
+        if(fd_out<0){
+            ROS_ERROR("cannot open socket");
+            return false;
+        }
+
         socketInitSuccess = true;
     }
     return socketInitSuccess;
@@ -124,6 +147,8 @@ void robot_status_callback(const rio_control_node::Robot_Status &msg)
 
 void ros_odom_callback(const nav_msgs::Odometry &msg)
 {
+	(void)msg;
+	static ros::Time prevTime(0);
 	try {
 		ck::PlannerInput protoPlannerInput;
 		protoPlannerInput.Clear();
@@ -145,10 +170,9 @@ void ros_odom_callback(const nav_msgs::Odometry &msg)
 			protoPlannerInput.set_force_stop(mROSPlannerInput.force_stop);
 			protoPlannerInput.set_trajectory_id(mROSPlannerInput.trajectory_id);
 		}
-
 		if (protoPlannerInput.SerializeToArray(outputBuffer, BUFSIZE))
 		{
-			ssize_t bSent = sendto(fd, outputBuffer, protoPlannerInput.ByteSizeLong(), 0, (struct sockaddr*)&mSIPAddr, sizeof(mSIPAddr));
+			ssize_t bSent = sendto(fd_out, outputBuffer, protoPlannerInput.ByteSizeLong(), 0, (struct sockaddr*)&mSIPAddr_out, sizeof(mSIPAddr_out));
 			if (bSent < 0)
 			{
 				ROS_ERROR("Failed to send quesadilla proto planner input");
@@ -157,8 +181,9 @@ void ros_odom_callback(const nav_msgs::Odometry &msg)
 	}
 	catch (...)
 	{
-		
+		ROS_ERROR("Exception in odom callback for quesadilla");
 	}
+	prevTime = ros::Time::now();
 }
 
 void receive_data_thread()
@@ -171,8 +196,8 @@ void receive_data_thread()
 		{
 			sockaddr recvFromAddr;
 			socklen_t recvFromAddrSize;
-			int numBytes = recvfrom(fd, &buffer, sizeof(buffer), MSG_WAITALL, &recvFromAddr, &recvFromAddrSize);
-			if (numBytes > 0)
+			int numBytes = recvfrom(fd_in, &buffer, sizeof(buffer), 0, &recvFromAddr, &recvFromAddrSize);
+			if (numBytes >= 0)
 			{
 				ck::PlannerOutput protoPlannerOutput;
 				if(protoPlannerOutput.ParseFromArray(buffer, numBytes))
@@ -199,6 +224,10 @@ void receive_data_thread()
 					setROSOutputZeros();
 				}
 			}
+			else
+			{
+				ROS_ERROR("Socket Receive Quesadilla err: %d", numBytes);
+			}
 		}
 		mROSPlannerOutputPub.publish(mROSPlannerOutput);
 	}
@@ -213,22 +242,12 @@ int main(int argc, char **argv)
 	tfListener = new tf2_ros::TransformListener(tfBuffer);
 
 	ros::ServiceServer ros_planner_input_sub = node->advertiseService("quesadilla_planner_input", ros_planner_input_callback);
-	ros::Subscriber ros_odom_sub = node->subscribe("/odometry/filtered", 1, ros_odom_callback);
-	ros::Subscriber robot_status_sub = node->subscribe("/RobotStatus", 1, robot_status_callback);
+	ros::Subscriber ros_odom_sub = node->subscribe("/odometry/filtered", 1, ros_odom_callback, ros::TransportHints().tcpNoDelay());
+	ros::Subscriber robot_status_sub = node->subscribe("/RobotStatus", 1, robot_status_callback, ros::TransportHints().tcpNoDelay());
 	mROSPlannerOutputPub = node->advertise<quesadilla_auto_node::Planner_Output>("/QuesadillaPlannerOutput", 1);
 
     while (!socket_init()){}
 
-	// Bind the socket with the server address
-    if ( bind(fd, (const struct sockaddr *)&mSIPAddr, sizeof(mSIPAddr)) < 0 )
-    {
-        ROS_ERROR("bind failed");
-		ros::shutdown();
-    }
-
-	//Update address with send port
-	mSIPAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-	mSIPAddr.sin_port = htons(SEND_PORT);
 	std::thread recv_thread(receive_data_thread);
 
 	ros::spin();
