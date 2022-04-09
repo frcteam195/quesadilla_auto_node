@@ -49,6 +49,7 @@ find_package(catkin REQUIRED COMPONENTS roscpp std_msgs message_generation rio_c
 add_message_files(
   FILES
   Planner_Output.msg
+  Quesadilla_Diagnostics.msg
 )
 
 ## Generate services in the 'srv' folder

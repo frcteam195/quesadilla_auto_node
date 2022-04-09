@@ -17,6 +17,7 @@
 #include <rio_control_node/Robot_Status.h>
 #include <quesadilla_auto_node/Planner_Input.h>
 #include <quesadilla_auto_node/Planner_Output.h>
+#include <quesadilla_auto_node/Quesadilla_Diagnostics.h>
 #include <ck_utilities/CKMath.hpp>
 
 #include <nav_msgs/Odometry.h>
@@ -43,6 +44,7 @@ ros::NodeHandle* node;
 quesadilla_auto_node::Planner_Input::Request mROSPlannerInput;
 quesadilla_auto_node::Planner_Output mROSPlannerOutput;
 ros::Publisher mROSPlannerOutputPub;
+ros::Publisher mQuesaDiagnosticsPub;
 
 tf2_ros::Buffer tfBuffer;
 tf2_ros::TransformListener* tfListener;
@@ -57,6 +59,11 @@ int fd_out;
 bool socketInitSuccess;
 char outputBuffer[BUFSIZE];
 static std::atomic_bool is_red_alliance {false};
+
+static std::atomic<double> curr_x_in {0};
+static std::atomic<double> curr_y_in {0};
+static std::atomic<double> curr_yaw_deg {0};
+static std::atomic_int curr_traj_id {-1};
 
 bool socket_init()
 {
@@ -164,12 +171,27 @@ void ros_odom_callback(const nav_msgs::Odometry &msg)
 		pose2d->set_y(ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getY()));
 		pose2d->set_yaw(ck::math::get_yaw_from_quaternion(localSideOdometryConverted.getRotation()));
 		protoPlannerInput.set_allocated_pose(pose2d);
+
 		{
 			std::lock_guard<std::recursive_mutex> lock(mThreadLock);
 			protoPlannerInput.set_begin_trajectory(mROSPlannerInput.begin_trajectory);
 			protoPlannerInput.set_force_stop(mROSPlannerInput.force_stop);
 			protoPlannerInput.set_trajectory_id(mROSPlannerInput.trajectory_id);
+			///////////////////////
+			//Diag
+			curr_traj_id = mROSPlannerInput.trajectory_id;
+			///////////////////////
 		}
+
+		///////////////////////////////////////////////
+		//Diag
+		curr_x_in = ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getX());
+		curr_y_in = ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getY());
+		curr_yaw_deg = ck::math::rad2deg(ck::math::get_yaw_from_quaternion(localSideOdometryConverted.getRotation()));
+		////////////////////////////////////////////////
+
+
+
 		if (protoPlannerInput.SerializeToArray(outputBuffer, BUFSIZE))
 		{
 			ssize_t bSent = sendto(fd_out, outputBuffer, protoPlannerInput.ByteSizeLong(), 0, (struct sockaddr*)&mSIPAddr_out, sizeof(mSIPAddr_out));
@@ -193,6 +215,7 @@ void receive_data_thread()
 
 	while (ros::ok())
 	{
+		quesadilla_auto_node::Quesadilla_Diagnostics q_diag;
 		{
 			sockaddr recvFromAddr;
 			socklen_t recvFromAddrSize;
@@ -218,6 +241,22 @@ void receive_data_thread()
 							mROSPlannerInput.begin_trajectory = false;
 						}
 					}
+
+					{
+						//Diagnostic Info
+						q_diag.left_motor_output_rad_per_sec = protoPlannerOutput.left_motor_output_rad_per_sec();
+						q_diag.left_motor_feedforward_voltage = protoPlannerOutput.left_motor_feedforward_voltage();
+						q_diag.left_motor_accel_rad_per_sec2 = protoPlannerOutput.left_motor_accel_rad_per_sec2();
+						q_diag.right_motor_output_rad_per_sec = protoPlannerOutput.right_motor_output_rad_per_sec();
+						q_diag.right_motor_feedforward_voltage = protoPlannerOutput.right_motor_feedforward_voltage();
+						q_diag.right_motor_accel_rad_per_sec2 = protoPlannerOutput.right_motor_accel_rad_per_sec2();
+						q_diag.trajectory_completed = protoPlannerOutput.trajectory_completed();
+						q_diag.trajectory_active = protoPlannerOutput.trajectory_active();
+						q_diag.curr_x_in = curr_x_in;
+						q_diag.curr_y_in = curr_y_in;
+						q_diag.curr_yaw_deg = curr_yaw_deg;
+						q_diag.curr_traj_id = curr_traj_id;
+					}
 				}
 				else
 				{
@@ -230,6 +269,7 @@ void receive_data_thread()
 			}
 		}
 		mROSPlannerOutputPub.publish(mROSPlannerOutput);
+		mQuesaDiagnosticsPub.publish(q_diag);
 	}
 }
 
@@ -245,6 +285,7 @@ int main(int argc, char **argv)
 	ros::Subscriber ros_odom_sub = node->subscribe("/odometry/filtered", 1, ros_odom_callback, ros::TransportHints().tcpNoDelay());
 	ros::Subscriber robot_status_sub = node->subscribe("/RobotStatus", 1, robot_status_callback, ros::TransportHints().tcpNoDelay());
 	mROSPlannerOutputPub = node->advertise<quesadilla_auto_node::Planner_Output>("/QuesadillaPlannerOutput", 1);
+	mQuesaDiagnosticsPub = node->advertise<quesadilla_auto_node::Quesadilla_Diagnostics>("/QuesadillaDiagnostics", 1);
 
     while (!socket_init()){}
 
