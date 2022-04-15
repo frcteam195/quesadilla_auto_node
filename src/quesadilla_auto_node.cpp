@@ -232,11 +232,11 @@ void receive_data_thread()
 					mROSPlannerOutput.right_motor_feedforward_voltage = protoPlannerOutput.right_motor_feedforward_voltage();
 					mROSPlannerOutput.right_motor_accel_rad_per_sec2 = protoPlannerOutput.right_motor_accel_rad_per_sec2();
 					mROSPlannerOutput.trajectory_completed = protoPlannerOutput.trajectory_completed();
+					mROSPlannerOutput.trajectory_active = protoPlannerOutput.trajectory_active();
+					mROSPlannerOutput.trajectory_id = protoPlannerOutput.trajectory_id();
 
 					{
-						std::lock_guard<std::recursive_mutex> lock(mThreadLock);
-						mROSPlannerOutput.trajectory_active = protoPlannerOutput.trajectory_active();
-						if (mROSPlannerOutput.trajectory_active)
+						std::lock_guard<std::recursive_mutex> lock(mThreadLock);						if (mROSPlannerOutput.trajectory_active)
 						{
 							mROSPlannerInput.begin_trajectory = false;
 						}

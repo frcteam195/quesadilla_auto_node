@@ -6,3 +6,4 @@
   float64 right_motor_accel_rad_per_sec2
   bool trajectory_active
   bool trajectory_completed
+  int32 trajectory_id
