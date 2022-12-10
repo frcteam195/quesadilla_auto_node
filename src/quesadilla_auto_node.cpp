@@ -19,6 +19,7 @@
 #include <quesadilla_auto_node/Planner_Output.h>
 #include <quesadilla_auto_node/Quesadilla_Diagnostics.h>
 #include <ck_utilities/CKMath.hpp>
+#include <ck_utilities/geometry/geometry_ros_helpers.hpp>
 
 #include <nav_msgs/Odometry.h>
 
@@ -169,7 +170,7 @@ void ros_odom_callback(const nav_msgs::Odometry &msg)
 		ck::PlannerInput::Pose2d* pose2d = new ck::PlannerInput::Pose2d();
 		pose2d->set_x(ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getX()));
 		pose2d->set_y(ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getY()));
-		pose2d->set_yaw(ck::math::get_yaw_from_quaternion(localSideOdometryConverted.getRotation()));
+		pose2d->set_yaw(geometry::to_rotation(localSideOdometryConverted.getRotation()).yaw());
 		protoPlannerInput.set_allocated_pose(pose2d);
 
 		{
@@ -187,7 +188,7 @@ void ros_odom_callback(const nav_msgs::Odometry &msg)
 		//Diag
 		curr_x_in = ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getX());
 		curr_y_in = ck::math::meters_to_inches(localSideOdometryConverted.getOrigin().getY());
-		curr_yaw_deg = ck::math::rad2deg(ck::math::get_yaw_from_quaternion(localSideOdometryConverted.getRotation()));
+		curr_yaw_deg = ck::math::rad2deg(geometry::to_rotation(localSideOdometryConverted.getRotation()).yaw());
 		////////////////////////////////////////////////
 
 
